@@ -377,16 +377,20 @@ final class ArchiveTests: XCTestCase {
         let stagePins = app.buttons["calibration.stage.pins"]
         let rotateButton = app.buttons["calibration.rotate90"]
         let centerHereButton = app.buttons["calibration.centerHere"]
-        let saveButton = app.buttons["calibration.save"]
+        let nextPinsButton = app.buttons["calibration.nextPins"]
+        let earlySaveButton = app.buttons["calibration.earlySave"]
 
         XCTAssertTrue(stagePlace.waitForExistence(timeout: 5))
         XCTAssertTrue(stagePlace.isSelected)
         XCTAssertTrue(stagePins.exists)
+        XCTAssertFalse(app.buttons["calibration.save"].exists, "Redundant top-right Save button must be removed.")
         XCTAssertFalse(app.buttons["calibration.mode.adjust"].exists, "Stage 1 mode toggle must be removed.")
         XCTAssertFalse(app.buttons["calibration.mode.basemap"].exists, "Stage 1 mode toggle must be removed.")
         XCTAssertTrue(rotateButton.exists)
         XCTAssertTrue(centerHereButton.exists)
-        XCTAssertTrue(saveButton.exists)
+        XCTAssertTrue(nextPinsButton.exists)
+        XCTAssertTrue(earlySaveButton.exists)
+        XCTAssertGreaterThan(nextPinsButton.frame.width, earlySaveButton.frame.width)
         attachScreenshot("Calibration Stage 1 Place")
 
         let canvas = app.maps.firstMatch
@@ -413,10 +417,15 @@ final class ArchiveTests: XCTestCase {
         rotateButton.tap()
         centerHereButton.tap()
 
-        // Stage 2: Crosshair Pin Refinement (place 3 non-collinear pins for affine fit)
-        stagePins.tap()
+        // Stage 2: Advance via the bottom Next: Add Pins button into Stage 2 browsing mode
+        nextPinsButton.tap()
         let addPinButton = app.buttons["calibration.addPin"]
         XCTAssertTrue(addPinButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(stagePins.isSelected)
+        XCTAssertFalse(app.buttons["calibration.lockSource"].exists, "Advancing from Stage 1 must land in Stage 2 browsing mode.")
+        XCTAssertFalse(app.buttons["calibration.finishSave"].exists, "Done & Save must not appear before 3 pins.")
+        XCTAssertTrue(earlySaveButton.exists)
+        XCTAssertGreaterThan(addPinButton.frame.width, earlySaveButton.frame.width)
         attachScreenshot("Calibration Stage 2 Pins idle")
 
         let pinDrags: [(panBeforeLock: (CGVector, CGVector)?, panBeforeMatch: (CGVector, CGVector))] = [
@@ -448,15 +457,38 @@ final class ArchiveTests: XCTestCase {
                 attachScreenshot("Calibration Stage 2 Pick Target")
             }
             matchTarget.tap()
+
+            if idx < 2 {
+                XCTAssertTrue(addPinButton.waitForExistence(timeout: 3))
+                XCTAssertTrue(earlySaveButton.exists)
+                XCTAssertFalse(app.buttons["calibration.finishSave"].exists, "Done & Save must stay hidden until 3 pins are placed.")
+                XCTAssertGreaterThan(addPinButton.frame.width, earlySaveButton.frame.width)
+            }
+
+            if idx == 0 {
+                // Verify early Save warns that at least 3 pins are recommended before allowing save.
+                earlySaveButton.tap()
+                let fewPinsAlert = app.alerts["At Least 3 Pins Recommended"]
+                XCTAssertTrue(fewPinsAlert.waitForExistence(timeout: 3))
+                XCTAssertTrue(fewPinsAlert.buttons["Save Anyway"].exists)
+                let addMorePins = fewPinsAlert.buttons["Add More Pins"]
+                XCTAssertTrue(addMorePins.exists)
+                addMorePins.tap()
+                XCTAssertTrue(fewPinsAlert.waitForNonExistence(timeout: 3))
+                XCTAssertFalse(app.textFields["calibration.saveSheet.titleField"].exists)
+            }
         }
 
         XCTAssertTrue(app.buttons["calibration.pin.3.delete"].waitForExistence(timeout: 3))
         let finishSaveButton = app.buttons["calibration.finishSave"]
         XCTAssertTrue(finishSaveButton.waitForExistence(timeout: 3))
+        XCTAssertFalse(earlySaveButton.exists, "Secondary early Save button must give way to Done & Save at 3+ pins.")
+        XCTAssertGreaterThan(finishSaveButton.frame.width, addPinButton.frame.width)
         attachScreenshot("Calibration Stage 2 Three Pins")
 
-        // Save calibrated map via the Stage 2 Done & Save button and bake local SQLite tiles
+        // Save calibrated map via the Stage 2 Done & Save button (no fewer-than-3-pins warning)
         finishSaveButton.tap()
+        XCTAssertFalse(app.alerts["At Least 3 Pins Recommended"].exists)
         let titleField = app.textFields["calibration.saveSheet.titleField"]
         let confirmSave = app.buttons["calibration.saveSheet.confirm"]
         XCTAssertTrue(titleField.waitForExistence(timeout: 5))
@@ -501,6 +533,42 @@ final class ArchiveTests: XCTestCase {
         confirmDelete.tap()
 
         XCTAssertTrue(app.staticTexts["1 / 4 Active"].waitForExistence(timeout: 5))
+    }
+
+    func testEarlySaveWithFewPinsWarnsAndAllowsSavingAnyway() throws {
+        app.terminate()
+        app.launchArguments = ["-UITestingResetLibrary", "-UITestingEnableSampleImport"]
+        app.launch()
+
+        let libraryButton = app.navigationBars.buttons["archive.library"]
+        XCTAssertTrue(libraryButton.waitForExistence(timeout: 5))
+        libraryButton.tap()
+
+        let importButton = app.buttons["archive.library.import"]
+        XCTAssertTrue(importButton.waitForExistence(timeout: 5))
+        importButton.tap()
+
+        let earlySaveButton = app.buttons["calibration.earlySave"]
+        XCTAssertTrue(earlySaveButton.waitForExistence(timeout: 5))
+
+        // Early Save from Stage 1 (0 pins) warns and "Add Pins" routes to Stage 2 browsing.
+        earlySaveButton.tap()
+        let alert = app.alerts["At Least 3 Pins Recommended"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        let addPinsChoice = alert.buttons["Add Pins"]
+        XCTAssertTrue(addPinsChoice.exists)
+        addPinsChoice.tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["calibration.stage.pins"].isSelected)
+        XCTAssertTrue(app.buttons["calibration.addPin"].waitForExistence(timeout: 3))
+
+        // Choosing "Save Anyway" proceeds to the Save overlay.
+        earlySaveButton.tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        let saveAnywayChoice = alert.buttons["Save Anyway"]
+        XCTAssertTrue(saveAnywayChoice.exists)
+        saveAnywayChoice.tap()
+        XCTAssertTrue(app.textFields["calibration.saveSheet.titleField"].waitForExistence(timeout: 5))
     }
 
     private func panMap(_ map: XCUIElement, from start: CGVector, to end: CGVector) {

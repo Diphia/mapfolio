@@ -109,6 +109,8 @@ struct MapCalibrationView: View {
     @State private var suggestedRegionLabel: String
 
     // Save sheet state
+    private static let minimumRecommendedPins = 3
+    @State private var isFewPinsAlertPresented = false
     @State private var isSaveSheetPresented = false
     @State private var mapTitle: String
     @State private var mapYear: String
@@ -232,6 +234,10 @@ struct MapCalibrationView: View {
         }
     }
 
+    private var hasRecommendedPins: Bool {
+        controlPoints.count >= Self.minimumRecommendedPins
+    }
+
     private var canDragRoughSheet: Bool {
         stage == .place && controlPoints.isEmpty
     }
@@ -333,6 +339,21 @@ struct MapCalibrationView: View {
                 await reverseGeocodeCurrentCenter()
             }
         }
+        .alert(AppText.calibrationFewPinsAlertTitle, isPresented: $isFewPinsAlertPresented) {
+            Button(AppText.calibrationFewPinsContinueTitle(pinCount: controlPoints.count), role: .cancel) {
+                isSearchExpanded = false
+                pinStep = .browsing
+                stage = .pins
+            }
+            Button(AppText.calibrationFewPinsSaveAnywayTitle) {
+                prepareAndPresentSaveSheet()
+            }
+        } message: {
+            Text(AppText.calibrationFewPinsAlertMessage(
+                pinCount: controlPoints.count,
+                minimumRecommended: Self.minimumRecommendedPins
+            ))
+        }
     }
 
     // MARK: - Top Bar & Search
@@ -363,7 +384,7 @@ struct MapCalibrationView: View {
             .contentShape(Rectangle())
             .accessibilityIdentifier("calibration.cancel")
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
 
             // 2-stage switcher
             HStack(spacing: 0) {
@@ -397,29 +418,6 @@ struct MapCalibrationView: View {
                             .strokeBorder(MonolithPalette.hairlineStrong, lineWidth: 1)
                     )
             )
-
-            Spacer(minLength: 4)
-
-            Button {
-                prepareAndPresentSaveSheet()
-            } label: {
-                Text(AppText.saveLabel)
-                    .font(.subheadline.weight(.semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(MonolithPalette.inkOnInverted)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 38)
-                    .background(
-                        Rectangle()
-                            .fill(MonolithPalette.ink)
-                    )
-            }
-            .buttonStyle(.plain)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-            .accessibilityIdentifier("calibration.save")
         }
         .padding(.horizontal, 14)
         .padding(.top, 8)
@@ -713,6 +711,61 @@ struct MapCalibrationView: View {
                 }
                 .frame(width: 40, height: 40)
             }
+
+            // Primary progression + secondary early save row
+            HStack(spacing: 8) {
+                Button {
+                    requestSave()
+                } label: {
+                    Text(AppText.saveLabel)
+                        .font(.subheadline.weight(.regular))
+                        .foregroundStyle(MonolithPalette.ink)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 46)
+                        .background(
+                            Rectangle()
+                                .fill(MonolithPalette.surfaceElevated)
+                                .overlay(
+                                    Rectangle()
+                                        .strokeBorder(MonolithPalette.hairlineStrong, lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("calibration.earlySave")
+
+                Button {
+                    isSearchExpanded = false
+                    pinStep = .browsing
+                    stage = .pins
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(
+                            controlPoints.isEmpty
+                                ? AppText.calibrationNextPinsTitle
+                                : AppText.calibrationContinueToPinsTitle(count: controlPoints.count)
+                        )
+                        Image(systemName: "arrow.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(MonolithPalette.inkOnInverted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .background(
+                        Rectangle()
+                            .fill(MonolithPalette.ink)
+                    )
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("calibration.nextPins")
+            }
         }
         .padding(14)
         .background(dockBackground)
@@ -784,16 +837,52 @@ struct MapCalibrationView: View {
                 }
             }
 
+            if !hasRecommendedPins {
+                Text(AppText.calibrationRecommendedPinsHint(
+                    currentCount: controlPoints.count,
+                    minimumRecommended: Self.minimumRecommendedPins
+                ))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(MonolithPalette.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("calibration.pinsRecommendationHint")
+            }
+
             HStack(spacing: 8) {
-                if controlPoints.isEmpty {
+                if !hasRecommendedPins {
+                    Button {
+                        requestSave()
+                    } label: {
+                        Text(AppText.saveLabel)
+                            .font(.subheadline.weight(.regular))
+                            .foregroundStyle(MonolithPalette.ink)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 46)
+                            .background(
+                                Rectangle()
+                                    .fill(MonolithPalette.surfaceElevated)
+                                    .overlay(
+                                        Rectangle()
+                                            .strokeBorder(MonolithPalette.hairlineStrong, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("calibration.earlySave")
+
                     Button {
                         isSearchExpanded = false
                         pinStep = .pickingSource
                     } label: {
-                        Label(AppText.calibrationAddPinTitle, systemImage: "plus.viewfinder")
+                        Label(AppText.calibrationAddAnotherPinTitle, systemImage: "plus.viewfinder")
                             .font(.subheadline.weight(.semibold))
                             .tracking(0.6)
                             .foregroundStyle(MonolithPalette.inkOnInverted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                             .frame(maxWidth: .infinity, minHeight: 46)
                             .background(
                                 Rectangle()
@@ -829,7 +918,7 @@ struct MapCalibrationView: View {
                     .accessibilityIdentifier("calibration.addPin")
 
                     Button {
-                        prepareAndPresentSaveSheet()
+                        requestSave()
                     } label: {
                         Text(AppText.calibrationFinishAndSaveTitle)
                             .font(.subheadline.weight(.semibold))
@@ -1208,6 +1297,16 @@ struct MapCalibrationView: View {
             if let label, !label.isEmpty, suggestedRegionLabel.isEmpty {
                 suggestedRegionLabel = label
             }
+        }
+    }
+
+    private func requestSave() {
+        isSearchExpanded = false
+        pinStep = .browsing
+        if hasRecommendedPins {
+            prepareAndPresentSaveSheet()
+        } else {
+            isFewPinsAlertPresented = true
         }
     }
 

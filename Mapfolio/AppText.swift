@@ -129,9 +129,47 @@ enum AppText {
 
     static let calibrationAddAnotherPinTitle = "Add Pin"
 
+    static let calibrationNextPinsTitle = "Next: Add Pins"
+
+    static func calibrationContinueToPinsTitle(count: Int) -> String {
+        "Continue to Pins (\(count))"
+    }
+
     static let calibrationFinishAndSaveTitle = "Done & Save"
 
     static let calibrationStage1Hint = "Drag, pinch & twist on the map to adjust it, or outside to move the basemap."
+
+    static func calibrationRecommendedPinsHint(currentCount: Int, minimumRecommended: Int) -> String {
+        switch currentCount {
+        case 0:
+            return "0/\(minimumRecommended) pins · Add at least \(minimumRecommended) pins for accurate alignment"
+        case 1:
+            return "1/\(minimumRecommended) pins · Add 2 more to lock scale & rotation"
+        case 2:
+            return "2/\(minimumRecommended) pins · Add 1 more for full alignment"
+        default:
+            return "\(currentCount) pins · Ready to save, or add more to refine"
+        }
+    }
+
+    static let calibrationFewPinsAlertTitle = "At Least 3 Pins Recommended"
+
+    static func calibrationFewPinsAlertMessage(pinCount: Int, minimumRecommended: Int) -> String {
+        switch pinCount {
+        case 0:
+            return "For accurate map alignment, add at least \(minimumRecommended) landmark pins first. Saving now will only keep your rough placement."
+        case 1:
+            return "You currently have 1 pin. At least \(minimumRecommended) pins are recommended so Mapfolio can align scale, rotation, and stretch accurately."
+        default:
+            return "You currently have \(pinCount) pins. Adding at least \(minimumRecommended) pins is recommended for full alignment accuracy."
+        }
+    }
+
+    static func calibrationFewPinsContinueTitle(pinCount: Int) -> String {
+        pinCount == 0 ? "Add Pins" : "Add More Pins"
+    }
+
+    static let calibrationFewPinsSaveAnywayTitle = "Save Anyway"
 
     static let calibrationPickSourceBanner = "Step 1/2 · Aim crosshair at a landmark on your map"
 
