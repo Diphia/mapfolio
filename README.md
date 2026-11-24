@@ -1,3 +1,7 @@
+<p>
+  <img src="Mapfolio/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="Mapfolio icon" width="96" height="96" />
+</p>
+
 # Mapfolio
 
 Mapfolio is a personal map collection for iPhone. Save maps you find, align them to Apple Maps, and compare them with the modern basemap.
