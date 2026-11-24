@@ -63,7 +63,7 @@ final class ArchiveTests: XCTestCase {
         attachScreenshot("Main clean portrait layers icon")
     }
 
-    func testLibraryPerMapControlsPersistenceCameraPreservationAndExplicitFocus() throws {
+    func testLibraryOverviewLayouts3DInspectPersistenceCameraPreservationAndFocus() throws {
         let libraryButton = app.navigationBars.buttons["archive.library"]
         let map = app.maps.firstMatch
 
@@ -80,8 +80,26 @@ final class ArchiveTests: XCTestCase {
 
         libraryButton.tap()
 
+        // Full-screen overview defaults to Grid layout.
         let closeButton = app.buttons["archive.library.close"]
         let viewToggle = app.buttons["archive.library.viewToggle"]
+        let shanghaiGridCard = app.buttons["archive.library.grid.shanghai1946"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Map Collection"].exists)
+        XCTAssertTrue(viewToggle.exists)
+        XCTAssertTrue(shanghaiGridCard.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["archive.library.shanghai1946.focus"].exists, "Overview must not show detail placard controls.")
+        attachScreenshot("Full-screen overview grid")
+
+        // Switch overview to List layout and open Shanghai 1946 detail view.
+        viewToggle.tap()
+        let shanghaiListRow = app.buttons["archive.library.list.shanghai1946"]
+        XCTAssertTrue(shanghaiListRow.waitForExistence(timeout: 3))
+        attachScreenshot("Full-screen overview list")
+
+        shanghaiListRow.tap()
+
+        let backButton = app.buttons["archive.library.back"]
         let preview = app.descendants(matching: .any)["archive.library.shanghai1946.preview"]
         let hidden = app.buttons["archive.library.shanghai1946.display.hidden"]
         let translucent = app.buttons["archive.library.shanghai1946.opacity.translucent"]
@@ -89,8 +107,8 @@ final class ArchiveTests: XCTestCase {
         let focusButton = app.buttons["archive.library.shanghai1946.focus"]
         let sourceLink = app.descendants(matching: .any)["archive.library.shanghai1946.source"]
 
-        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Map Collection"].exists)
+        XCTAssertTrue(backButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(closeButton.exists)
         XCTAssertTrue(preview.waitForExistence(timeout: 3))
         XCTAssertTrue(hidden.waitForExistence(timeout: 3))
         XCTAssertTrue(translucent.exists)
@@ -109,16 +127,24 @@ final class ArchiveTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(sourceLink.frame.height, 43.99)
 
         XCTAssertFalse(app.descendants(matching: .any)["archive.library.accuracy"].exists, "Removed accuracy block must not exist.")
-        attachScreenshot("Gallery default 2.5D translucent")
+        attachScreenshot("Detail 3D translucent")
+
+        // Dragging horizontally & diagonally on the 3D stage must tilt the sheet, NOT switch maps.
+        XCTAssertEqual(preview.value as? String, "interactions:0")
+        let dragStart = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.55))
+        let dragEnd = preview.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.38))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragEnd, withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertEqual(preview.value as? String, "interactions:1", "Dragging on the map sheet should drive 3D tilt inspection.")
+        XCTAssertTrue(focusButton.exists, "Horizontal dragging in single-map detail must NOT swipe to another map.")
 
         // Change display mode to opaque.
         opaque.tap()
         XCTAssertTrue(opaque.isSelected)
         XCTAssertFalse(translucent.isSelected)
         XCTAssertFalse(hidden.isSelected)
-        attachScreenshot("Gallery 2.5D opaque")
+        attachScreenshot("Detail 3D opaque")
 
-        // Hide the layer: surfaces subtle disabled strip while remembering opaque underneath.
+        // Hide the layer: surfaces disabled strip while remembering opaque underneath.
         hidden.tap()
         XCTAssertTrue(hidden.isSelected)
         XCTAssertFalse(opaque.isSelected)
@@ -127,9 +153,9 @@ final class ArchiveTests: XCTestCase {
         XCTAssertTrue(disabledState.waitForExistence(timeout: 3))
         XCTAssertTrue(enableAllButton.exists)
         XCTAssertGreaterThanOrEqual(enableAllButton.frame.height, 43.99)
-        attachScreenshot("Gallery 2.5D hidden")
+        attachScreenshot("Detail 3D hidden")
 
-        // Close sheet and verify canvas stays clean AND camera did NOT jump.
+        // Close directly from detail view and verify canvas stays clean AND camera did NOT jump.
         closeButton.tap()
         XCTAssertTrue(closeButton.waitForNonExistence(timeout: 3))
         XCTAssertFalse(app.descendants(matching: .any)["archive.modernOnly"].exists)
@@ -142,7 +168,7 @@ final class ArchiveTests: XCTestCase {
         map.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6)
         XCTAssertEqual(peekState.value as? String, "count:0,peeking:false")
 
-        // Relaunch without reset argument to verify local persistence.
+        // Relaunch without reset argument to verify persistence of layer state AND overview List layout.
         app.terminate()
         app.launchArguments = []
         app.launch()
@@ -159,23 +185,22 @@ final class ArchiveTests: XCTestCase {
         }
 
         libraryButton.tap()
-        XCTAssertTrue(hidden.waitForExistence(timeout: 5))
-        XCTAssertTrue(hidden.isSelected, "Hidden state must persist across relaunch.")
-        XCTAssertTrue(disabledState.exists)
+        XCTAssertTrue(shanghaiListRow.waitForExistence(timeout: 5), "Selected overview List layout must persist across relaunch.")
+        XCTAssertTrue(disabledState.exists, "All-hidden notice must appear on overview when all layers are hidden.")
 
-        // Re-enable using the disabled-state action; should restore remembered opaque mode without moving camera.
+        // Re-enable from overview disabled-state action; should restore remembered opaque mode.
         enableAllButton.tap()
         XCTAssertTrue(disabledState.waitForNonExistence(timeout: 3))
+
+        shanghaiListRow.tap()
+        XCTAssertTrue(opaque.waitForExistence(timeout: 3))
         XCTAssertTrue(opaque.isSelected, "Remembered opaque mode must be restored when re-enabling.")
 
-        // Toggle overview grid and return via card selection.
-        XCTAssertTrue(viewToggle.exists)
+        // Return to overview via Back button and switch back to Grid layout.
+        backButton.tap()
+        XCTAssertTrue(shanghaiListRow.waitForExistence(timeout: 3))
         viewToggle.tap()
-        let gridItem = app.buttons["archive.library.grid.shanghai1946"]
-        XCTAssertTrue(gridItem.waitForExistence(timeout: 3))
-        attachScreenshot("Gallery overview grid")
-        gridItem.tap()
-        XCTAssertTrue(focusButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(shanghaiGridCard.waitForExistence(timeout: 3))
 
         closeButton.tap()
         XCTAssertTrue(closeButton.waitForNonExistence(timeout: 3))
@@ -184,9 +209,11 @@ final class ArchiveTests: XCTestCase {
             "Re-enabling overlay and closing library must preserve camera."
         )
 
-        // Explicit View Map Sheet should dismiss sheet and recenter on Shanghai bounds.
+        // Explicit View Map Sheet should dismiss full-screen library and recenter on Shanghai bounds.
         libraryButton.tap()
-        XCTAssertTrue(focusButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(shanghaiGridCard.waitForExistence(timeout: 5), "Switched Grid layout must persist.")
+        shanghaiGridCard.tap()
+        XCTAssertTrue(focusButton.waitForExistence(timeout: 3))
         focusButton.tap()
         XCTAssertTrue(focusButton.waitForNonExistence(timeout: 3))
         XCTAssertNotNil(
@@ -195,7 +222,7 @@ final class ArchiveTests: XCTestCase {
         )
     }
 
-    func testMultiCityCatalogGalleryAndFocus() throws {
+    func testMultiCityCatalogOverviewAndFocus() throws {
         let libraryButton = app.navigationBars.buttons["archive.library"]
         let map = app.maps.firstMatch
 
@@ -203,9 +230,11 @@ final class ArchiveTests: XCTestCase {
         XCTAssertTrue(map.waitForExistence(timeout: 5))
         libraryButton.tap()
 
-        let viewToggle = app.buttons["archive.library.viewToggle"]
-        XCTAssertTrue(viewToggle.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["1 / 4 Active"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["1 / 4 Active"].waitForExistence(timeout: 5))
+        for expectedID in ["shanghai1946", "beijing1930", "paris1811", "london1765"] {
+            XCTAssertTrue(app.buttons["archive.library.grid.\(expectedID)"].waitForExistence(timeout: 3))
+        }
+        attachScreenshot("Overview 4-map grid")
 
         let expectations: [(id: String, targetLon: Double, mode: String)] = [
             ("beijing1930", 116.390, "opacity.translucent"),
@@ -214,19 +243,8 @@ final class ArchiveTests: XCTestCase {
         ]
 
         for entry in expectations {
-            if !app.buttons["archive.library.grid.\(entry.id)"].exists {
-                XCTAssertTrue(viewToggle.waitForExistence(timeout: 3))
-                viewToggle.tap()
-            }
-            if entry.id == "beijing1930" {
-                for expectedID in ["shanghai1946", "beijing1930", "paris1811", "london1765"] {
-                    XCTAssertTrue(app.buttons["archive.library.grid.\(expectedID)"].waitForExistence(timeout: 3))
-                }
-                attachScreenshot("Gallery 4-map overview grid")
-            }
-
             let gridCard = app.buttons["archive.library.grid.\(entry.id)"]
-            XCTAssertTrue(gridCard.waitForExistence(timeout: 3))
+            XCTAssertTrue(gridCard.waitForExistence(timeout: 5))
             gridCard.tap()
 
             let hidden = app.buttons["archive.library.\(entry.id).display.hidden"]
@@ -238,8 +256,8 @@ final class ArchiveTests: XCTestCase {
             XCTAssertTrue(targetControl.exists)
             targetControl.tap()
             XCTAssertTrue(targetControl.isSelected)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.45))
-            attachScreenshot("Gallery 2.5D \(entry.id)")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+            attachScreenshot("Detail 3D \(entry.id)")
 
             XCTAssertTrue(focusButton.exists)
             focusButton.tap()
@@ -255,22 +273,15 @@ final class ArchiveTests: XCTestCase {
             }
         }
 
-        // Reopening the library sheet must remember the last viewed map (london1765) instead of resetting to shanghai1946.
+        // Reopening the library always starts at the full-screen overview root.
         XCTAssertTrue(libraryButton.waitForExistence(timeout: 5))
         libraryButton.tap()
-        XCTAssertTrue(app.buttons["archive.library.london1765.focus"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["archive.library.grid.london1765"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["4 / 4 Active"].waitForExistence(timeout: 3))
         let closeButton = app.buttons["archive.library.close"]
         XCTAssertTrue(closeButton.exists)
         closeButton.tap()
         XCTAssertTrue(closeButton.waitForNonExistence(timeout: 3))
-
-        // Relaunching must also preserve the last selected map position.
-        app.terminate()
-        app.launchArguments = []
-        app.launch()
-        XCTAssertTrue(libraryButton.waitForExistence(timeout: 5))
-        libraryButton.tap()
-        XCTAssertTrue(app.buttons["archive.library.london1765.focus"].waitForExistence(timeout: 5))
     }
 
     func testEmptyLibraryCatalogStateAndRestore() throws {
@@ -288,12 +299,16 @@ final class ArchiveTests: XCTestCase {
         attachScreenshot("Library empty catalog")
 
         restoreButton.tap()
+        let shanghaiCard = app.buttons["archive.library.grid.shanghai1946"]
+        XCTAssertTrue(shanghaiCard.waitForExistence(timeout: 3))
+        shanghaiCard.tap()
+
         let translucent = app.buttons["archive.library.shanghai1946.opacity.translucent"]
         XCTAssertTrue(translucent.waitForExistence(timeout: 3))
         XCTAssertTrue(translucent.isSelected)
     }
 
-    func testWideLandscapeToolbarAndSheetLayout() throws {
+    func testWideLandscapeToolbarAndFullScreenLayout() throws {
         let navBar = app.navigationBars.firstMatch
         let libraryButton = navBar.buttons["archive.library"]
         let locateButton = navBar.buttons["archive.locate"]
@@ -323,10 +338,15 @@ final class ArchiveTests: XCTestCase {
 
         libraryButton.tap()
         let closeButton = app.buttons["archive.library.close"]
-        let translucent = app.buttons["archive.library.shanghai1946.opacity.translucent"]
+        let shanghaiCard = app.buttons["archive.library.grid.shanghai1946"]
         XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(shanghaiCard.waitForExistence(timeout: 3))
+        attachScreenshot("Wide landscape overview")
+
+        shanghaiCard.tap()
+        let translucent = app.buttons["archive.library.shanghai1946.opacity.translucent"]
         XCTAssertTrue(translucent.waitForExistence(timeout: 3))
-        attachScreenshot("Wide landscape library gallery")
+        attachScreenshot("Wide landscape detail")
 
         closeButton.tap()
         XCTAssertTrue(closeButton.waitForNonExistence(timeout: 3))
@@ -340,6 +360,18 @@ final class ArchiveTests: XCTestCase {
         let libraryButton = app.navigationBars.buttons["archive.library"]
         XCTAssertTrue(libraryButton.waitForExistence(timeout: 5))
         libraryButton.tap()
+
+        let viewToggle = app.buttons["archive.library.viewToggle"]
+        let shanghaiCard = app.buttons["archive.library.grid.shanghai1946"]
+        XCTAssertTrue(shanghaiCard.waitForExistence(timeout: 5))
+        XCTAssertTrue(viewToggle.exists)
+        viewToggle.tap()
+
+        let shanghaiListRow = app.buttons["archive.library.list.shanghai1946"]
+        XCTAssertTrue(shanghaiListRow.waitForExistence(timeout: 3))
+        attachScreenshot("Overview list accessibility large")
+
+        shanghaiListRow.tap()
 
         let focusButton = app.buttons["archive.library.shanghai1946.focus"]
         let sourceLink = app.descendants(matching: .any)["archive.library.shanghai1946.source"]
@@ -355,7 +387,7 @@ final class ArchiveTests: XCTestCase {
         XCTAssertFalse(focusButton.frame.intersects(sourceLink.frame))
         XCTAssertFalse(translucent.frame.intersects(opaque.frame))
         XCTAssertFalse(hidden.frame.intersects(translucent.frame))
-        attachScreenshot("Library accessibility large")
+        attachScreenshot("Detail accessibility large")
     }
 
     func testImportTwoStageCalibrationPersistenceRecalibrateAndDelete() throws {
@@ -501,10 +533,14 @@ final class ArchiveTests: XCTestCase {
         titleField.typeText("Sample Park Plan")
         confirmSave.tap()
 
-        // Should return to gallery with 5 maps total and new map active & selected
-        XCTAssertTrue(app.staticTexts["2 / 5 Active"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["Sample Park Plan"].waitForExistence(timeout: 5))
-        attachScreenshot("Gallery With Imported Map")
+        // Should land on the newly imported map's detail view.
+        XCTAssertTrue(app.staticTexts["Sample Park Plan"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["archive.library.back"].waitForExistence(timeout: 5))
+        attachScreenshot("Detail With Imported Map")
+
+        // Navigate back to overview and verify 2 / 5 Active count.
+        app.buttons["archive.library.back"].tap()
+        XCTAssertTrue(app.staticTexts["2 / 5 Active"].waitForExistence(timeout: 5))
 
         // Relaunch without reset to confirm persistence of user map + tiles
         app.terminate()
@@ -514,6 +550,10 @@ final class ArchiveTests: XCTestCase {
         XCTAssertTrue(libraryButton.waitForExistence(timeout: 5))
         libraryButton.tap()
         XCTAssertTrue(app.staticTexts["2 / 5 Active"].waitForExistence(timeout: 5))
+
+        let importedCard = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Sample Park Plan'")).firstMatch
+        XCTAssertTrue(importedCard.waitForExistence(timeout: 5))
+        importedCard.tap()
         XCTAssertTrue(app.staticTexts["Sample Park Plan"].waitForExistence(timeout: 5))
 
         // Open Recalibrate and verify the 3 control points are preserved
@@ -524,7 +564,7 @@ final class ArchiveTests: XCTestCase {
         app.buttons["calibration.cancel"].tap()
         XCTAssertTrue(app.staticTexts["Sample Park Plan"].waitForExistence(timeout: 5))
 
-        // Delete the user map and verify clean return to 4 built-in maps
+        // Delete the user map and verify clean return to overview with 4 built-in maps
         let deleteButton = app.buttons.matching(NSPredicate(format: "identifier ENDSWITH '.delete'")).firstMatch
         XCTAssertTrue(deleteButton.waitForExistence(timeout: 5))
         deleteButton.tap()

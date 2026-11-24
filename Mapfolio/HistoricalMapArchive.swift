@@ -262,15 +262,24 @@ struct HistoricalMapArchive: Identifiable, Hashable {
     }
 }
 
+enum MapLibraryOverviewLayout: String, Codable, CaseIterable, Identifiable {
+    case grid
+    case list
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class HistoricalMapLibraryStore: ObservableObject {
     static let storageKey = "cc.monism.antiquemaps.libraryStates.v1"
     static let selectedMapStorageKey = "cc.monism.antiquemaps.selectedMapID.v1"
+    static let overviewLayoutStorageKey = "cc.monism.antiquemaps.overviewLayout.v1"
     static let resetLaunchArgument = "-UITestingResetLibrary"
     static let emptyCatalogLaunchArgument = "-UITestingEmptyCatalog"
 
     @Published private(set) var catalog: [HistoricalMapArchive]
     @Published private(set) var selectedMapID: String?
+    @Published private(set) var overviewLayout: MapLibraryOverviewLayout
     @Published private var statesByID: [String: HistoricalMapLayerState]
 
     private let defaults: UserDefaults
@@ -288,6 +297,7 @@ final class HistoricalMapLibraryStore: ObservableObject {
         if arguments.contains(Self.resetLaunchArgument) {
             defaults.removeObject(forKey: Self.storageKey)
             defaults.removeObject(forKey: Self.selectedMapStorageKey)
+            defaults.removeObject(forKey: Self.overviewLayoutStorageKey)
             userMapStorage.deleteAllUserMaps()
         }
 
@@ -311,6 +321,13 @@ final class HistoricalMapLibraryStore: ObservableObject {
             self.selectedMapID = savedSelection
         } else {
             self.selectedMapID = resolvedCatalog.first?.id
+        }
+
+        if let savedLayout = defaults.string(forKey: Self.overviewLayoutStorageKey),
+           let parsedLayout = MapLibraryOverviewLayout(rawValue: savedLayout) {
+            self.overviewLayout = parsedLayout
+        } else {
+            self.overviewLayout = .grid
         }
     }
 
@@ -462,6 +479,16 @@ final class HistoricalMapLibraryStore: ObservableObject {
         }
         selectedMapID = mapID
         defaults.set(mapID, forKey: Self.selectedMapStorageKey)
+    }
+
+    func setOverviewLayout(_ layout: MapLibraryOverviewLayout) {
+        guard overviewLayout != layout else { return }
+        overviewLayout = layout
+        defaults.set(layout.rawValue, forKey: Self.overviewLayoutStorageKey)
+    }
+
+    func toggleOverviewLayout() {
+        setOverviewLayout(overviewLayout == .grid ? .list : .grid)
     }
 
     func restoreCatalogDefaults() {

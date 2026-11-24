@@ -21,9 +21,14 @@ enum AppText {
         "\(enabled) / \(total) Active"
     }
 
-    static func viewToggleLabel(isGridPresented: Bool) -> String {
-        isGridPresented ? "Back to Gallery View" : "Switch to Overview Grid"
+    static func overviewLayoutToggleLabel(layout: MapLibraryOverviewLayout) -> String {
+        switch layout {
+        case .grid: "Switch to List View"
+        case .list: "Switch to Grid View"
+        }
     }
+
+    static let tiltStageHint = "Drag to inspect in 3D"
 
     static let modernBasemapOnlyNotice = "Showing modern basemap only"
 

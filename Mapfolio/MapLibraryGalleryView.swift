@@ -11,8 +11,9 @@ struct MapLibraryGalleryView: View {
     let onFocusMap: (HistoricalMapArchive) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var isOverviewGridPresented = false
-    @State private var hasAlignedInitialScroll = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    @State private var inspectedMapID: String?
     @State private var previewsByID: [String: UIImage] = [:]
 
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -22,22 +23,9 @@ struct MapLibraryGalleryView: View {
 
     private let useSampleImportForUITests = ProcessInfo.processInfo.arguments.contains("-UITestingEnableSampleImport")
 
-    private var activeMap: HistoricalMapArchive? {
-        if let selectedID = store.selectedMapID,
-           let matched = store.catalog.first(where: { $0.id == selectedID }) {
-            return matched
-        }
-        return store.catalog.first
-    }
-
-    private var selectedMapBinding: Binding<String?> {
-        Binding(
-            get: { store.selectedMapID ?? store.catalog.first?.id },
-            set: { newID in
-                guard hasAlignedInitialScroll else { return }
-                store.selectMap(newID)
-            }
-        )
+    private var inspectedMap: HistoricalMapArchive? {
+        guard let inspectedMapID else { return nil }
+        return store.catalog.first(where: { $0.id == inspectedMapID })
     }
 
     var body: some View {
@@ -45,18 +33,16 @@ struct MapLibraryGalleryView: View {
             MonolithPalette.canvas
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                headerBar
-
-                if store.catalog.isEmpty {
-                    emptyLibraryView
-                } else if isOverviewGridPresented {
-                    overviewGridView
-                        .transition(.opacity)
-                } else {
-                    showcaseBody
-                        .transition(.opacity)
-                }
+            if let map = inspectedMap {
+                detailScreen(for: map)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .scale(scale: 0.985))
+                    )
+            } else {
+                overviewScreen
+                    .transition(.opacity)
             }
         }
         .fontDesign(.serif)
@@ -70,6 +56,9 @@ struct MapLibraryGalleryView: View {
             seedCachedPreviews()
         }
         .onChange(of: store.catalog.map(\.id)) { _, ids in
+            if let current = inspectedMapID, !ids.contains(current) {
+                inspectedMapID = nil
+            }
             if let current = store.selectedMapID, !ids.contains(current) {
                 store.selectMap(ids.first)
             } else if store.selectedMapID == nil {
@@ -95,7 +84,7 @@ struct MapLibraryGalleryView: View {
                 onSaved: { record in
                     let archive = store.upsertUserMap(record: record)
                     previewsByID.removeValue(forKey: archive.id)
-                    isOverviewGridPresented = false
+                    inspectedMapID = archive.id
                     Task {
                         if let rendered = await MapSheetPreviewLoader.shared.loadPreview(for: archive) {
                             previewsByID[archive.id] = rendered
@@ -119,6 +108,11 @@ struct MapLibraryGalleryView: View {
         ) { target in
             Button(AppText.deleteMapTitle, role: .destructive) {
                 previewsByID.removeValue(forKey: target.id)
+                if inspectedMapID == target.id {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+                        inspectedMapID = nil
+                    }
+                }
                 store.deleteUserMap(id: target.id)
                 pendingDeleteMap = nil
             }
@@ -130,7 +124,21 @@ struct MapLibraryGalleryView: View {
         }
     }
 
-    private var headerBar: some View {
+    // MARK: - Level 1: Full-Screen Overview (Grid & List)
+
+    private var overviewScreen: some View {
+        VStack(spacing: 0) {
+            overviewHeaderBar
+
+            if store.catalog.isEmpty {
+                emptyLibraryView
+            } else {
+                overviewContent
+            }
+        }
+    }
+
+    private var overviewHeaderBar: some View {
         HStack(spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(AppText.libraryLabel)
@@ -162,11 +170,11 @@ struct MapLibraryGalleryView: View {
                         .frame(width: 1, height: 34)
 
                     Button {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                            isOverviewGridPresented.toggle()
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.20)) {
+                            store.toggleOverviewLayout()
                         }
                     } label: {
-                        Image(systemName: isOverviewGridPresented ? "rectangle.portrait.on.rectangle.portrait" : "square.grid.2x2")
+                        Image(systemName: store.overviewLayout == .grid ? "list.bullet" : "square.grid.2x2")
                             .font(.system(size: 13, weight: .regular))
                             .foregroundStyle(MonolithPalette.ink.opacity(0.88))
                             .frame(width: 38, height: 34)
@@ -174,25 +182,14 @@ struct MapLibraryGalleryView: View {
                     }
                     .buttonStyle(MonolithSegmentCellButtonStyle(reduceMotion: reduceMotion))
                     .accessibilityIdentifier("archive.library.viewToggle")
-                    .accessibilityLabel(AppText.viewToggleLabel(isGridPresented: isOverviewGridPresented))
+                    .accessibilityLabel(AppText.overviewLayoutToggleLabel(layout: store.overviewLayout))
                 }
 
                 Rectangle()
                     .fill(MonolithPalette.hairline)
                     .frame(width: 1, height: 34)
 
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(MonolithPalette.ink)
-                        .frame(width: 38, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(MonolithSegmentCellButtonStyle(reduceMotion: reduceMotion))
-                .accessibilityIdentifier("archive.library.close")
-                .accessibilityLabel(AppText.doneLabel)
+                closeLibraryButton
             }
             .background(MonolithPalette.canvas)
             .overlay(
@@ -202,8 +199,23 @@ struct MapLibraryGalleryView: View {
             .frame(minHeight: 44)
         }
         .padding(.horizontal, 22)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private var closeLibraryButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MonolithPalette.ink)
+                .frame(width: 38, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(MonolithSegmentCellButtonStyle(reduceMotion: reduceMotion))
+        .accessibilityIdentifier("archive.library.close")
+        .accessibilityLabel(AppText.doneLabel)
     }
 
     @ViewBuilder
@@ -241,143 +253,256 @@ struct MapLibraryGalleryView: View {
         }
     }
 
-    private var showcaseBody: some View {
+    private var overviewContent: some View {
         GeometryReader { proxy in
-            let isShortViewport = proxy.size.height < 520
-            let maxEditorialWidth = min(proxy.size.width, 460)
-            let stageHeight = isShortViewport
-                ? max(146, min(proxy.size.height * 0.42, 184))
-                : max(248, min(proxy.size.height * 0.48, 344))
+            let columnCount = proxy.size.width > 560 ? 3 : 2
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
+                VStack(spacing: 14) {
                     if !store.hasEnabledOverlay {
                         allDisabledNoticeStrip
-                            .frame(maxWidth: maxEditorialWidth)
-                            .padding(.horizontal, 22)
-                            .padding(.top, 8)
-                            .padding(.bottom, 2)
                             .transition(.opacity)
                     }
 
-                    mapStageCarousel(
-                        containerWidth: proxy.size.width,
-                        stageHeight: stageHeight
-                    )
+                    if store.overviewLayout == .grid {
+                        LazyVGrid(columns: columns, spacing: 14) {
+                            ForEach(store.catalog) { map in
+                                let mapState = store.state(for: map)
+                                let isSelected = map.id == store.selectedMapID
 
-                    if store.catalog.count > 1 {
-                        paginationBars
-                            .padding(.top, 2)
-                            .padding(.bottom, 12)
-                    }
-
-                    if let map = activeMap {
-                        EditorialMapPlacard(
-                            map: map,
-                            state: store.state(for: map),
-                            reduceMotion: reduceMotion,
-                            onSelectDisplayMode: { mode in
-                                store.setDisplayMode(mode, for: map.id)
-                            },
-                            onFocus: {
-                                onFocusMap(map)
-                            },
-                            onRecalibrate: {
-                                startRecalibration(for: map)
-                            },
-                            onDelete: {
-                                pendingDeleteMap = map
+                                Button {
+                                    openMapDetail(map)
+                                } label: {
+                                    OverviewGridCard(
+                                        map: map,
+                                        previewImage: previewsByID[map.id],
+                                        displayMode: mapState.displayMode,
+                                        isSelected: isSelected
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("archive.library.grid.\(map.id)")
+                                .accessibilityLabel(
+                                    AppText.gridCardAccessibilityLabel(
+                                        displayTitle: map.displayTitle,
+                                        modeTitle: mapState.displayMode.title
+                                    )
+                                )
                             }
-                        )
-                        .frame(maxWidth: maxEditorialWidth)
-                        .padding(.horizontal, 22)
-                        .padding(.top, isShortViewport ? 6 : 10)
-                        .padding(.bottom, isShortViewport ? 16 : 26)
-                        .id(map.id)
+                        }
+                        .accessibilityIdentifier("archive.library.grid")
+                        .transition(.opacity)
+                    } else {
+                        LazyVStack(spacing: 10) {
+                            ForEach(store.catalog) { map in
+                                let mapState = store.state(for: map)
+                                let isSelected = map.id == store.selectedMapID
+
+                                Button {
+                                    openMapDetail(map)
+                                } label: {
+                                    OverviewListRow(
+                                        map: map,
+                                        previewImage: previewsByID[map.id],
+                                        displayMode: mapState.displayMode,
+                                        isSelected: isSelected
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("archive.library.list.\(map.id)")
+                                .accessibilityLabel(
+                                    AppText.gridCardAccessibilityLabel(
+                                        displayTitle: map.displayTitle,
+                                        modeTitle: mapState.displayMode.title
+                                    )
+                                )
+                            }
+                        }
+                        .accessibilityIdentifier("archive.library.list")
+                        .transition(.opacity)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
+                .padding(.horizontal, 22)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
-            .scrollBounceBehavior(.basedOnSize)
         }
     }
 
-    @ViewBuilder
-    private func mapStageCarousel(containerWidth: CGFloat, stageHeight: CGFloat) -> some View {
-        let cardWidth = min(containerWidth - 32, 372)
-        let horizontalInset = max(16, (containerWidth - cardWidth) / 2)
+    // MARK: - Level 2: Single-Map Detail & 3D Inspection
 
-        if store.catalog.count <= 1, let onlyMap = store.catalog.first {
-            PerspectiveMapSheetView(
-                map: onlyMap,
-                previewImage: previewsByID[onlyMap.id],
-                displayMode: store.state(for: onlyMap).displayMode,
-                isAvailable: onlyMap.bundleURL != nil,
-                reduceMotion: reduceMotion
-            )
-            .frame(width: cardWidth, height: stageHeight)
-            .frame(maxWidth: .infinity)
-        } else {
-            ScrollViewReader { scrollProxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 22) {
-                        ForEach(store.catalog) { map in
-                            PerspectiveMapSheetView(
+    private func detailScreen(for map: HistoricalMapArchive) -> some View {
+        VStack(spacing: 0) {
+            detailHeaderBar
+
+            GeometryReader { proxy in
+                let isLandscape = proxy.size.width > 560 && proxy.size.height < 540
+                let useScrollablePlacard = dynamicTypeSize.isAccessibilitySize || proxy.size.height < 620
+                let maxEditorialWidth = min(proxy.size.width, 480)
+
+                if isLandscape {
+                    HStack(alignment: .center, spacing: 24) {
+                        InteractiveMapSheetStage(
+                            map: map,
+                            previewImage: previewsByID[map.id],
+                            displayMode: store.state(for: map).displayMode,
+                            isAvailable: map.bundleURL != nil,
+                            reduceMotion: reduceMotion
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .id(map.id)
+
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 14) {
+                                if !store.hasEnabledOverlay {
+                                    allDisabledNoticeStrip
+                                        .transition(.opacity)
+                                }
+
+                                detailPlacard(for: map)
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.trailing, 22)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(width: min(max(300, proxy.size.width * 0.44), 420))
+                    }
+                    .padding(.leading, 22)
+                } else {
+                    VStack(spacing: 0) {
+                        if !store.hasEnabledOverlay {
+                            allDisabledNoticeStrip
+                                .frame(maxWidth: maxEditorialWidth)
+                                .padding(.horizontal, 22)
+                                .padding(.top, 8)
+                                .transition(.opacity)
+                        }
+
+                        if useScrollablePlacard {
+                            InteractiveMapSheetStage(
                                 map: map,
                                 previewImage: previewsByID[map.id],
                                 displayMode: store.state(for: map).displayMode,
                                 isAvailable: map.bundleURL != nil,
                                 reduceMotion: reduceMotion
                             )
-                            .frame(width: cardWidth, height: stageHeight)
-                            .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                                content
-                                    .scaleEffect(phase.isIdentity ? 1.0 : 0.89)
-                                    .opacity(phase.isIdentity ? 1.0 : 0.48)
-                            }
+                            .frame(height: max(180, min(proxy.size.height * 0.36, 280)))
+                            .frame(maxWidth: .infinity)
                             .id(map.id)
+
+                            ScrollView(.vertical, showsIndicators: false) {
+                                detailPlacard(for: map)
+                                    .frame(maxWidth: maxEditorialWidth)
+                                    .padding(.horizontal, 22)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, 26)
+                            }
+                            .scrollBounceBehavior(.basedOnSize)
+                        } else {
+                            InteractiveMapSheetStage(
+                                map: map,
+                                previewImage: previewsByID[map.id],
+                                displayMode: store.state(for: map).displayMode,
+                                isAvailable: map.bundleURL != nil,
+                                reduceMotion: reduceMotion
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .id(map.id)
+
+                            detailPlacard(for: map)
+                                .frame(maxWidth: maxEditorialWidth)
+                                .padding(.horizontal, 22)
+                                .padding(.top, 10)
+                                .padding(.bottom, 26)
+                                .layoutPriority(1)
                         }
                     }
-                    .scrollTargetLayout()
-                }
-                .contentMargins(.horizontal, horizontalInset, for: .scrollContent)
-                .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: selectedMapBinding)
-                .frame(height: stageHeight)
-                .onAppear {
-                    hasAlignedInitialScroll = false
-                    if let targetID = activeMap?.id {
-                        scrollProxy.scrollTo(targetID, anchor: .center)
-                    }
-                    DispatchQueue.main.async {
-                        hasAlignedInitialScroll = true
-                    }
-                }
-                .onChange(of: store.selectedMapID) { _, newID in
-                    guard let newID else { return }
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
-                        scrollProxy.scrollTo(newID, anchor: .center)
-                    }
-                }
-                .onDisappear {
-                    hasAlignedInitialScroll = false
                 }
             }
         }
     }
 
-    private var paginationBars: some View {
-        HStack(spacing: 5) {
-            ForEach(store.catalog) { map in
-                let isCurrent = map.id == activeMap?.id
-                Rectangle()
-                    .fill(isCurrent ? MonolithPalette.ink : MonolithPalette.hairline)
-                    .frame(width: isCurrent ? 24 : 10, height: 1.5)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: activeMap?.id)
+    private var detailHeaderBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                closeMapDetail()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .medium))
+                    Text(AppText.libraryLabel)
+                        .font(.footnote.weight(.medium))
+                        .tracking(1.0)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(MonolithPalette.inkSecondary)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(MonolithPalette.canvas)
+                .overlay(
+                    Rectangle()
+                        .strokeBorder(MonolithPalette.hairline, lineWidth: 1)
+                )
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("archive.library.back")
+            .accessibilityLabel(AppText.backLabel)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 0) {
+                closeLibraryButton
+            }
+            .background(MonolithPalette.canvas)
+            .overlay(
+                Rectangle()
+                    .strokeBorder(MonolithPalette.hairline, lineWidth: 1)
+            )
+            .frame(minHeight: 44)
         }
-        .accessibilityHidden(true)
+        .padding(.horizontal, 22)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
     }
+
+    private func detailPlacard(for map: HistoricalMapArchive) -> some View {
+        EditorialMapPlacard(
+            map: map,
+            state: store.state(for: map),
+            reduceMotion: reduceMotion,
+            onSelectDisplayMode: { mode in
+                store.setDisplayMode(mode, for: map.id)
+            },
+            onFocus: {
+                onFocusMap(map)
+            },
+            onRecalibrate: {
+                startRecalibration(for: map)
+            },
+            onDelete: {
+                pendingDeleteMap = map
+            }
+        )
+        .id(map.id)
+    }
+
+    private func openMapDetail(_ map: HistoricalMapArchive) {
+        store.selectMap(map.id)
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+            inspectedMapID = map.id
+        }
+    }
+
+    private func closeMapDetail() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.20)) {
+            inspectedMapID = nil
+        }
+    }
+
+    // MARK: - Shared Notices & Empty State
 
     private var allDisabledNoticeStrip: some View {
         HStack(spacing: 10) {
@@ -429,49 +554,6 @@ struct MapLibraryGalleryView: View {
         .accessibilityIdentifier("archive.library.disabledState")
     }
 
-    private var overviewGridView: some View {
-        GeometryReader { proxy in
-            let columnCount = proxy.size.width > 560 ? 3 : 2
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: columns, spacing: 14) {
-                    ForEach(store.catalog) { map in
-                        let mapState = store.state(for: map)
-                        let isSelected = map.id == activeMap?.id
-
-                        Button {
-                            hasAlignedInitialScroll = false
-                            store.selectMap(map.id)
-                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                                isOverviewGridPresented = false
-                            }
-                        } label: {
-                            OverviewGridCard(
-                                map: map,
-                                previewImage: previewsByID[map.id],
-                                displayMode: mapState.displayMode,
-                                isSelected: isSelected
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("archive.library.grid.\(map.id)")
-                        .accessibilityLabel(
-                            AppText.gridCardAccessibilityLabel(
-                                displayTitle: map.displayTitle,
-                                modeTitle: mapState.displayMode.title
-                            )
-                        )
-                    }
-                }
-                .padding(.horizontal, 22)
-                .padding(.top, 16)
-                .padding(.bottom, 28)
-            }
-        }
-        .accessibilityIdentifier("archive.library.grid")
-    }
-
     private var emptyLibraryView: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 24)
@@ -515,6 +597,8 @@ struct MapLibraryGalleryView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("archive.library.empty")
     }
+
+    // MARK: - Preview & Import Helpers
 
     private func seedCachedPreviews() {
         for map in store.catalog {
@@ -562,14 +646,18 @@ struct MapLibraryGalleryView: View {
     }
 }
 
-// MARK: - 2.5D Perspective Map Sheet (Sharp 0pt Monolith Stage)
+// MARK: - Interactive 3D Tilt Inspection Stage (Finite Rubber-Banded Tilt)
 
-private struct PerspectiveMapSheetView: View {
+private struct InteractiveMapSheetStage: View {
     let map: HistoricalMapArchive
     let previewImage: UIImage?
     let displayMode: HistoricalLayerDisplayMode
     let isAvailable: Bool
     let reduceMotion: Bool
+
+    @State private var dragTranslation: CGSize = .zero
+    @State private var isDragging = false
+    @State private var tiltInteractionCount = 0
 
     private var isHidden: Bool {
         displayMode == .hidden || !isAvailable
@@ -586,27 +674,107 @@ private struct PerspectiveMapSheetView: View {
         return max(0.68, min(1.85, image.size.width / image.size.height))
     }
 
+    private var restPitch: Double {
+        isHidden ? 24.0 : 15.0
+    }
+
+    private var restYaw: Double {
+        isHidden ? -4.0 : -6.0
+    }
+
+    private var restRoll: Double {
+        -1.6
+    }
+
+    private var dragPitchDelta: Double {
+        let maxDelta = reduceMotion ? 16.0 : 38.0
+        return maxDelta * tanh(Double(-dragTranslation.height) / 145.0)
+    }
+
+    private var dragYawDelta: Double {
+        let maxDelta = reduceMotion ? 18.0 : 44.0
+        return maxDelta * tanh(Double(dragTranslation.width) / 145.0)
+    }
+
+    private var effectivePitch: Double {
+        max(-46.0, min(56.0, restPitch + dragPitchDelta))
+    }
+
+    private var effectiveYaw: Double {
+        max(-48.0, min(48.0, restYaw + dragYawDelta))
+    }
+
+    private var effectiveRoll: Double {
+        isDragging ? 0.0 : restRoll
+    }
+
+    private var combinedRotationAngle: Double {
+        hypot(effectivePitch, effectiveYaw)
+    }
+
+    private var combinedRotationAxis: (x: CGFloat, y: CGFloat, z: CGFloat) {
+        let magnitude = combinedRotationAngle
+        guard magnitude > 0.001 else {
+            return (x: 1, y: 0, z: 0)
+        }
+        return (
+            x: CGFloat(effectivePitch / magnitude),
+            y: CGFloat(effectiveYaw / magnitude),
+            z: 0
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
-            let maxW = max(148, proxy.size.width - 56)
-            let maxH = max(116, proxy.size.height - 40)
+            let maxW = max(156, proxy.size.width - 68)
+            let maxH = max(124, proxy.size.height - 64)
             let fittedWidth = min(maxW, maxH * sheetAspectRatio)
             let fittedHeight = fittedWidth / sheetAspectRatio
 
+            let pitchRad = effectivePitch * .pi / 180.0
+            let yawRad = effectiveYaw * .pi / 180.0
+            let maxEdgeX = CGFloat(-sin(yawRad) * 7.0)
+            let maxEdgeY = CGFloat(sin(pitchRad) * 7.5)
+
+            let sheenShiftX = CGFloat(sin(yawRad) * 0.55)
+            let sheenShiftY = CGFloat(-sin(pitchRad) * 0.45)
+
+            let shadowX = CGFloat(-sin(yawRad) * 20.0)
+            let shadowY = CGFloat((isDragging ? 24.0 : 16.0) + sin(pitchRad) * 12.0)
+
+            let activeScale: CGFloat = {
+                if isDragging {
+                    return isHidden ? 0.98 : 1.035
+                }
+                return isHidden ? 0.93 : 1.0
+            }()
+
             ZStack {
                 ZStack {
+                    // Multi-ply antique paper thickness edges reacting to 3D angle
                     Rectangle()
                         .fill(isHidden ? MonolithPalette.paperEdgeDim : MonolithPalette.paperEdgeDeep)
                         .frame(width: fittedWidth, height: fittedHeight)
-                        .offset(x: -2.5, y: 4.5)
+                        .offset(x: maxEdgeX, y: maxEdgeY)
 
                     Rectangle()
-                        .fill(isHidden ? MonolithPalette.paperEdgeDim.opacity(0.85) : MonolithPalette.paperEdgeTop)
+                        .fill(isHidden ? MonolithPalette.paperEdgeDim.opacity(0.88) : MonolithPalette.paperEdgeTop.opacity(0.82))
                         .frame(width: fittedWidth, height: fittedHeight)
-                        .offset(x: -1.2, y: 2.2)
+                        .offset(x: maxEdgeX * 0.62, y: maxEdgeY * 0.62)
 
+                    Rectangle()
+                        .fill(isHidden ? MonolithPalette.paperEdgeDim.opacity(0.76) : MonolithPalette.paperEdgeTop)
+                        .frame(width: fittedWidth, height: fittedHeight)
+                        .offset(x: maxEdgeX * 0.30, y: maxEdgeY * 0.30)
+
+                    // Front archival map face
                     ZStack {
                         ModernGridUnderlay()
+                            .scaleEffect(1.06)
+                            .offset(
+                                x: CGFloat(-sin(yawRad) * 4.5),
+                                y: CGFloat(sin(pitchRad) * 4.5)
+                            )
                             .opacity(isTranslucent ? 1.0 : 0.0)
 
                         if let previewImage {
@@ -619,15 +787,18 @@ private struct PerspectiveMapSheetView: View {
                             placeholderParchment
                         }
 
+                        // Dynamic directional paper sheen that glides as the sheet tilts
                         LinearGradient(
                             stops: [
-                                .init(color: Color.white.opacity(0.10), location: 0.0),
-                                .init(color: Color.clear, location: 0.45),
-                                .init(color: Color.black.opacity(0.16), location: 1.0)
+                                .init(color: Color.white.opacity(isDragging ? 0.22 : 0.12), location: 0.0),
+                                .init(color: Color.white.opacity(isDragging ? 0.06 : 0.02), location: 0.28),
+                                .init(color: Color.clear, location: 0.52),
+                                .init(color: Color.black.opacity(isDragging ? 0.22 : 0.16), location: 1.0)
                             ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                            startPoint: UnitPoint(x: 0.15 + sheenShiftX, y: 0.08 + sheenShiftY),
+                            endPoint: UnitPoint(x: 0.85 + sheenShiftX, y: 0.92 + sheenShiftY)
                         )
+                        .blendMode(.overlay)
                     }
                     .frame(width: fittedWidth, height: fittedHeight)
                     .background(MonolithPalette.paperBase)
@@ -635,33 +806,77 @@ private struct PerspectiveMapSheetView: View {
                     .overlay(
                         Rectangle()
                             .strokeBorder(
-                                MonolithPalette.ink.opacity(isHidden ? 0.08 : 0.22),
+                                MonolithPalette.ink.opacity(isHidden ? 0.09 : (isDragging ? 0.32 : 0.22)),
                                 lineWidth: 0.5
                             )
                     )
                 }
-                .shadow(color: .black.opacity(isHidden ? 0.48 : 0.82), radius: isHidden ? 12 : 24, x: -3, y: isHidden ? 10 : 18)
-                .shadow(color: .black.opacity(isHidden ? 0.28 : 0.50), radius: 6, x: 0, y: 5)
+                .shadow(
+                    color: .black.opacity(isHidden ? 0.48 : (isDragging ? 0.88 : 0.80)),
+                    radius: isHidden ? 12 : (isDragging ? 30 : 22),
+                    x: shadowX,
+                    y: isHidden ? 10 : shadowY
+                )
+                .shadow(
+                    color: .black.opacity(isHidden ? 0.28 : 0.48),
+                    radius: 7,
+                    x: shadowX * 0.3,
+                    y: 6
+                )
                 .saturation(isHidden ? 0.42 : 1.02)
                 .brightness(isHidden ? -0.22 : 0.0)
                 .rotation3DEffect(
-                    .degrees(isHidden ? 44 : 36),
-                    axis: (x: 1, y: 0, z: 0),
+                    .degrees(combinedRotationAngle),
+                    axis: combinedRotationAxis,
                     anchor: .center,
                     anchorZ: 0,
-                    perspective: 0.44
+                    perspective: 0.46
                 )
-                .rotationEffect(.degrees(-5.5))
-                .scaleEffect(isHidden ? 0.93 : 1.0)
-                .offset(y: isHidden ? 10 : 0)
+                .rotationEffect(.degrees(effectiveRoll))
+                .scaleEffect(activeScale)
+                .offset(y: isHidden ? 8 : (isDragging ? -4 : 0))
                 .animation(
-                    reduceMotion ? nil : .spring(response: 0.44, dampingFraction: 0.84),
+                    reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82),
                     value: displayMode
                 )
+
+                VStack {
+                    Spacer()
+                    Text(AppText.tiltStageHint)
+                        .font(.caption2)
+                        .tracking(0.9)
+                        .foregroundStyle(MonolithPalette.inkFaint)
+                        .opacity(isDragging ? 0.0 : 0.82)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isDragging)
+                        .padding(.bottom, 4)
+                        .accessibilityHidden(true)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .local)
+                    .onChanged { value in
+                        if !isDragging {
+                            tiltInteractionCount += 1
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
+                                isDragging = true
+                            }
+                        }
+                        dragTranslation = value.translation
+                    }
+                    .onEnded { _ in
+                        withAnimation(
+                            reduceMotion
+                                ? .easeOut(duration: 0.15)
+                                : .spring(response: 0.56, dampingFraction: 0.72)
+                        ) {
+                            dragTranslation = .zero
+                            isDragging = false
+                        }
+                    }
+            )
         }
-        .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             AppText.previewAccessibilityLabel(
@@ -669,6 +884,8 @@ private struct PerspectiveMapSheetView: View {
                 modeTitle: displayMode.title
             )
         )
+        .accessibilityValue("interactions:\(tiltInteractionCount)")
+        .accessibilityHint(AppText.tiltStageHint)
         .accessibilityIdentifier("archive.library.\(map.id).preview")
     }
 
@@ -1044,9 +1261,148 @@ private struct OverviewGridCard: View {
         .overlay(
             Rectangle()
                 .strokeBorder(
-                    isSelected ? MonolithPalette.ink : MonolithPalette.hairline,
+                    isSelected ? MonolithPalette.hairlineStrong : MonolithPalette.hairline,
                     lineWidth: 1
                 )
         )
+    }
+}
+
+// MARK: - Overview List Row (Sharp 0pt Editorial Row)
+
+private struct OverviewListRow: View {
+    let map: HistoricalMapArchive
+    let previewImage: UIImage?
+    let displayMode: HistoricalLayerDisplayMode
+    let isSelected: Bool
+
+    private var isHidden: Bool { displayMode == .hidden }
+
+    private var secondaryAttribution: String {
+        map.isUserImported ? map.displayAttribution : map.sourceCompact
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                MonolithPalette.canvasDeep
+
+                Group {
+                    if let previewImage {
+                        Image(uiImage: previewImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        Rectangle()
+                            .fill(MonolithPalette.paperBase)
+                            .aspectRatio(1.4, contentMode: .fit)
+                    }
+                }
+                .clipped()
+                .overlay(
+                    Rectangle()
+                        .strokeBorder(MonolithPalette.ink.opacity(isHidden ? 0.08 : 0.18), lineWidth: 0.5)
+                )
+                .padding(6)
+                .shadow(color: .black.opacity(0.55), radius: 5, x: -1, y: 4)
+                .saturation(isHidden ? 0.42 : 1.0)
+                .brightness(isHidden ? -0.20 : 0.0)
+            }
+            .frame(width: 72, height: 58)
+            .overlay(
+                Rectangle()
+                    .strokeBorder(MonolithPalette.hairlineSubtle, lineWidth: 1)
+            )
+            .clipped()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(map.title)
+                    .font(.subheadline.weight(isHidden ? .regular : .medium))
+                    .foregroundStyle(isHidden ? MonolithPalette.inkSecondary : MonolithPalette.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                HStack(alignment: .center, spacing: 8) {
+                    Text(map.kickerText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(MonolithPalette.inkSecondary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+
+                    statusBadge
+                }
+
+                Text(secondaryAttribution)
+                    .font(.caption2)
+                    .foregroundStyle(MonolithPalette.inkMuted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MonolithPalette.inkFaint)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .frame(minHeight: 78)
+        .background(MonolithPalette.surface)
+        .overlay(alignment: .bottom) {
+            if !isHidden {
+                Rectangle()
+                    .fill(MonolithPalette.ink.opacity(displayMode == .opaque ? 0.92 : 0.45))
+                    .frame(height: 1.5)
+            }
+        }
+        .overlay(
+            Rectangle()
+                .strokeBorder(
+                    isSelected ? MonolithPalette.hairlineStrong : MonolithPalette.hairline,
+                    lineWidth: 1
+                )
+        )
+        .contentShape(Rectangle())
+    }
+
+    private var statusBadge: some View {
+        HStack(spacing: 5) {
+            Rectangle()
+                .fill(statusIndicatorColor)
+                .frame(width: 4, height: 10)
+                .overlay(
+                    Rectangle()
+                        .strokeBorder(MonolithPalette.hairlineStrong, lineWidth: isHidden ? 0.75 : 0)
+                )
+
+            Text(displayMode.title)
+                .font(.caption2.weight(isHidden ? .regular : .medium))
+                .tracking(0.3)
+                .foregroundStyle(statusTextColor)
+                .lineLimit(1)
+        }
+    }
+
+    private var statusIndicatorColor: Color {
+        switch displayMode {
+        case .hidden:
+            return Color.clear
+        case .translucent:
+            return MonolithPalette.ink.opacity(0.48)
+        case .opaque:
+            return MonolithPalette.ink
+        }
+    }
+
+    private var statusTextColor: Color {
+        switch displayMode {
+        case .hidden:
+            return MonolithPalette.inkMuted
+        case .translucent:
+            return MonolithPalette.inkSecondary
+        case .opaque:
+            return MonolithPalette.ink
+        }
     }
 }

@@ -152,7 +152,7 @@ struct ArchiveScreen: View {
             }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: focusRequest.nonce)
-        .sheet(isPresented: $isLibraryPresented) {
+        .fullScreenCover(isPresented: $isLibraryPresented) {
             MapLibraryGalleryView(
                 store: libraryStore,
                 calibrationProfile: shanghaiAlignment.profile,
@@ -169,7 +169,6 @@ struct ArchiveScreen: View {
                     isLibraryPresented = false
                 }
             )
-            .presentationDragIndicator(.visible)
         }
         .alert(AppText.locationAlertTitle, isPresented: $location.showSettings) {
             if location.status == .denied {

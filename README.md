@@ -6,7 +6,7 @@
 
 Mapfolio is a personal map collection for iPhone. Save maps you find, align them to Apple Maps, and compare them with the modern basemap.
 
-- Browse four historical city maps in a gallery or grid. Each layer can be hidden, translucent, or opaque.
+- Browse four historical city maps in a full-screen grid or list overview, then open any map sheet to inspect it in 3D and set it to hidden, translucent, or opaque.
 - Press and hold the map to see the modern basemap without any overlays. Release to restore your layers.
 - Import a map from Photos. Drag, pinch, and rotate it to place it, then optionally match landmarks with alignment pins. Saved map images and tiles stay on the device.
 - Use the location button to show your current position. Mapfolio requests location only while in use and does not record or upload your location.
