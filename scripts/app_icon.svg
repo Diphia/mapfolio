@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1024" height="1024">
+  <rect width="256" height="256" fill="#090909" />
+  <!-- Bottom sheet: modern basemap -->
+  <polygon
+    points="128,122 202,162 128,202 54,162"
+    fill="#090909"
+    stroke="#6B6B6B"
+    stroke-width="7.5"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+  />
+  <!-- Middle sheet: archived folio layer -->
+  <polygon
+    points="128,89 202,129 128,169 54,129"
+    fill="#090909"
+    stroke="#A2A2A2"
+    stroke-width="7.5"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+  />
+  <!-- Top sheet: active historical map sheet -->
+  <polygon points="128,54 202,94 128,134 54,94" fill="#161616" />
+  <!-- 4-quadrant fold creases capped cleanly by top sheet border -->
+  <g stroke="#A2A2A2" stroke-width="5.5" stroke-linecap="butt">
+    <line x1="91" y1="74" x2="165" y2="114" />
+    <line x1="165" y1="74" x2="91" y2="114" />
+  </g>
+  <polygon
+    points="128,54 202,94 128,134 54,94"
+    fill="none"
+    stroke="#F5F5F5"
+    stroke-width="8"
+    stroke-linejoin="miter"
+    stroke-miterlimit="6"
+  />
+  <!-- Central isometric calibration diamond -->
+  <polygon points="128,81 149,94 128,107 107,94" fill="#F5F5F5" />
+  <polygon points="128,89 136,94 128,99 120,94" fill="#090909" />
+</svg>
